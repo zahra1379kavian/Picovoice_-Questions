@@ -13,9 +13,6 @@ def softmax(u: np.ndarray, axis: int = -1) -> np.ndarray:
 
 
 def B_map(pi: List[int], blank: int) -> List[int]:
-    """
-      remove repeated labels (collapse consecutive duplicates) & remove blanks
-    """
     collapsed: List[int] = []
     prev = None
     for sym in pi:
@@ -26,9 +23,6 @@ def B_map(pi: List[int], blank: int) -> List[int]:
 
 
 def extend_with_blanks(z: List[int], blank: int) -> List[int]:
-    """
-      l^0 = (b, z1, b, z2, b, ..., z_U, b) so |l^0| = 2|z| + 1.
-    """
     l0: List[int] = [blank]
     for lab in z:
         l0.append(lab)
@@ -38,12 +32,12 @@ def extend_with_blanks(z: List[int], blank: int) -> List[int]:
 
 @dataclass
 class CTCForwardCache:
-    u: np.ndarray              # u^t_k
-    y: np.ndarray              # y^t_k
-    z: List[int]               # target labelling z
-    l0: List[int]              # modified label sequence l^0
-    alpha_hat: np.ndarray      # \hat{α}_t(s)
-    C: np.ndarray              # C_t
+    u: np.ndarray              
+    y: np.ndarray              
+    z: List[int]             
+    l0: List[int]              
+    alpha_hat: np.ndarray      
+    C: np.ndarray              
     blank: int
     eps: float
 
@@ -72,51 +66,48 @@ class CTC_class:
         if any(lab == self.blank for lab in z):
             raise ValueError("Target z must not contain the blank symbol.")
 
-        # y^t_k = softmax(u^t)_k
+        
         y = softmax(u, axis=1)
 
-        # Modified label sequence l^0
+        
         l0 = extend_with_blanks(z, blank=self.blank)
-        S = len(l0)  # S = |l^0| = 2|z| + 1
+        S = len(l0)  
 
-        alpha_hat = np.zeros((T, S), dtype=np.float64)  # \hat{α}_t(s)
-        C = np.zeros(T, dtype=np.float64)               # C_t = sum_s α_t(s)
+        alpha_hat = np.zeros((T, S), dtype=np.float64) 
+        C = np.zeros(T, dtype=np.float64)              
 
-        # Initialisation for α_1(s)
+        
         alpha = np.zeros(S, dtype=np.float64)
-        alpha[0] = y[0, self.blank]  # α_1(1) = y^1_b
+        alpha[0] = y[0, self.blank]  
         if S > 1:
-            alpha[1] = y[0, l0[1]]   # α_1(2) = y^1_{l1}
-        C[0] = np.sum(alpha)         # C_1 = sum_s α_1(s)
-        alpha_hat[0] = alpha / C[0]  # \hat{α}_1(s) = α_1(s)/C_1
+            alpha[1] = y[0, l0[1]]   
+        C[0] = np.sum(alpha)        
+        alpha_hat[0] = alpha / C[0]  
 
-        # Recursion for α_t(s)
+        
         for t in range(1, T):
             t1 = t + 1
             alpha = np.zeros(S, dtype=np.float64)
 
-            # α_t(s)=0 for s < |l^0| - 2(T-t) - 1 and for s<1.
+           
             s_min = max(1, S - 2*(T - t1) - 1) 
             s_max = min(S, 2*t1)                
 
             for s1 in range(s_min, s_max + 1): 
                 s = s1 - 1             
-                # \bar{α}_t(s) = α_{t-1}(s) + α_{t-1}(s-1)
+                
                 alpha_bar = alpha_hat[t-1, s]
                 if s - 1 >= 0:
                     alpha_bar += alpha_hat[t-1, s-1]
 
                 if (l0[s] == self.blank) or (s - 2 >= 0 and l0[s-2] == l0[s]):
-                    # α_t(s) = \bar{α}_t(s) * y^t_{l^0_s}
                     alpha[s] = alpha_bar * y[t, l0[s]]
                 else:
-                    # α_t(s) = (\bar{α}_t(s) + α_{t-1}(s-2)) * y^t_{l^0_s}
                     alpha[s] = (alpha_bar + alpha_hat[t-1, s-2]) * y[t, l0[s]]
 
             C[t] = np.sum(alpha)   
-            alpha_hat[t] = alpha / C[t]   # \hat{α}_t(s) = α_t(s)/C_t
+            alpha_hat[t] = alpha / C[t] 
 
-        # ln p(z|x) = Σ_t ln(C_t)  (sec. 4.1)
         log_p = float(np.sum(np.log(C)))
         loss = -log_p
 
@@ -141,36 +132,34 @@ class CTC_class:
         T, K = u.shape
         S = len(l0)
 
-        beta_hat = np.zeros((T, S), dtype=np.float64)  # \hat{β}_t(s)
-        D = np.zeros(T, dtype=np.float64)              # D_t = sum_s β_t(s)
+        beta_hat = np.zeros((T, S), dtype=np.float64) 
+        D = np.zeros(T, dtype=np.float64)        
 
-        # Initialisation for β_T(s)
+ 
         beta = np.zeros(S, dtype=np.float64)
-        beta[S-1] = y[T-1, blank]       # β_T(|l^0|) = y^T_b
+        beta[S-1] = y[T-1, blank]     
         if S > 1:
-            beta[S-2] = y[T-1, l0[S-2]] # β_T(|l^0|-1) = y^T_{l_|l|}
+            beta[S-2] = y[T-1, l0[S-2]] 
         D[T-1] = np.sum(beta)
         beta_hat[T-1] = beta / D[T-1]
 
-        # Recursion for β_t(s)
         for t in range(T-2, -1, -1):
             t1 = t + 1
             beta = np.zeros(S, dtype=np.float64)
 
-            # β_t(s)=0 for s>2t and s>|l^0| 
             s_max = min(S, 2*t1)
             for s in range(s_max):
-                # \bar{β}_t(s) = β_{t+1}(s) + β_{t+1}(s+1)
+                # beta_bar_t(s) = beta_{t+1}(s) + beta_{t+1}(s+1)
                 beta_bar = beta_hat[t+1, s]
                 if s + 1 < S:
                     beta_bar += beta_hat[t+1, s+1]
 
-                # β_t(s) transition rule
+                # beta_t(s) transition rule
                 if (l0[s] == blank) or (s + 2 < S and l0[s+2] == l0[s]):
-                    # β_t(s) = \bar{β}_t(s) * y^t_{l^0_s}
+                    # beta_t(s) = beta_bar_t(s) * y^t_{l0_s}
                     beta[s] = beta_bar * y[t, l0[s]]
                 else:
-                    # β_t(s) = (\bar{β}_t(s) + β_{t+1}(s+2)) * y^t_{l^0_s}
+                    # beta_t(s) = (beta_bar_t(s) + beta_{t+1}(s+2)) * y^t_{l0_s}
                     beta_s2 = beta_hat[t+1, s+2] if (s + 2 < S) else 0.0
                     beta[s] = (beta_bar + beta_s2) * y[t, l0[s]]
 
@@ -203,7 +192,7 @@ class CTC_class:
 
 def brute_force_p(y: np.ndarray, z: List[int], blank: int) -> float:
     """
-    Brute-force p(z|x) by summing over all paths π ∈ L_0^T. Only feasible for very small T and K (used here for tests).
+    Brute-force p(z|x) by summing over all paths pi in L_0^T. Only feasible for very small T and K (used here for tests).
     """
     T, K = y.shape
     p = 0.0
@@ -294,7 +283,7 @@ if __name__ == "__main__":
     assert np.max(np.abs(grad_row_sums)) < 1e-8
 
     # -----------------
-    # Test 5: empty target z=[] has probability Π_t y^t_blank
+    # Test 5: empty target z=[] has probability prod_t y^t_blank
     # -----------------
     np.random.seed(7)
     T, K = 5, 3
